@@ -1,34 +1,56 @@
-FROM ubuntu:20.04
+# Stage 1: Build stage
+FROM ubuntu:22.04 AS builder
 
-ARG repository="openfhe-development"
-ARG branch=main
-ARG tag=v0.9.1
-ARG CC_param=/usr/bin/gcc-10
-ARG CXX_param=/usr/bin/g++-10
-ARG no_threads=1
+ARG DEBIAN_FRONTEND=noninteractive
+ENV TZ=Etc/UTC
 
-ENV DEBIAN_FRONTEND=noninteractive
-ENV CC $CC_param
-ENV CXX $CXX_param
+# Install build pre-requisites
+RUN apt-get update && apt-get install -y \
+    git \
+    build-essential \
+    gcc \
+    g++ \
+    cmake \
+    autoconf \
+    libomp-dev \
+    ccache \
+    && rm -rf /var/lib/apt/lists/*
 
-#install pre-requisites for OpenFHE
-RUN apt update && apt install -y git \
-                                 build-essential \
-                                 gcc-10 \
-                                 g++-10 \
-                                 cmake \
-                                 autoconf \
-                                 clang-10 \
-                                 libomp5 \
-                                 libomp-dev \
-                                 doxygen \
-                                 graphviz \
-                                 libboost-all-dev=1.71.0.0ubuntu2
+# Create a working directory
+WORKDIR /openfhe-development
 
-RUN apt-get clean && rm -rf /var/lib/apt/lists/*
+# Copy the current directory contents into the container
+COPY . .
 
-#git clone the openfhe-development repository and its submodules (this always clones the most latest commit)
-RUN git clone https://github.com/openfheorg/$repository.git && cd $repository && git checkout $branch && git checkout $tag && git submodule sync --recursive && git submodule update --init  --recursive
+# Create build directory and build (using BuildKit cache mounts for faster rebuilds)
+RUN --mount=type=cache,target=/root/.cache/ccache \
+    --mount=type=cache,target=/openfhe-development/build/_deps \
+    mkdir -p build && cd build && \
+    cmake .. -DBUILD_UNITTESTS=OFF -DBUILD_BENCHMARKS=OFF -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_C_COMPILER_LAUNCHER=ccache && \
+    make -j$(nproc) advanced-ckks-bootstrapping gelu-piecewise-cpu layernorm-cpu softmax-cpu
 
-#installing OpenFHE and running tests
-RUN mkdir /$repository/build && cd /$repository/build && cmake .. && make -j $no_threads && make install && make testall
+# Stage 2: Runtime stage
+FROM ubuntu:22.04 AS runner
+
+ARG DEBIAN_FRONTEND=noninteractive
+ENV TZ=Etc/UTC
+
+# Install runtime dependencies (OpenMP runtime libraries)
+RUN apt-get update && apt-get install -y \
+    libomp5 \
+    libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set up working directory
+WORKDIR /openfhe-development
+
+# Copy shared libraries, binaries, and demo data from the builder stage
+COPY --from=builder /openfhe-development/build/lib/ /usr/local/lib/
+COPY --from=builder /openfhe-development/build/bin/ /openfhe-development/build/bin/
+COPY --from=builder /openfhe-development/demoData/ /openfhe-development/demoData/
+
+# Update the dynamic linker cache to find OpenFHE shared libraries
+RUN ldconfig
+
+# Run the default example
+CMD ["/openfhe-development/build/bin/examples/pke/softmax-cpu"]
