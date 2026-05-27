@@ -27,7 +27,7 @@ RUN --mount=type=cache,target=/root/.cache/ccache \
     --mount=type=cache,target=/openfhe-development/build/_deps \
     mkdir -p build && cd build && \
     cmake .. -DBUILD_UNITTESTS=OFF -DBUILD_BENCHMARKS=OFF -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_C_COMPILER_LAUNCHER=ccache && \
-    make -j$(nproc) advanced-ckks-bootstrapping gelu-piecewise-cpu layernorm-cpu softmax-cpu
+    make -j$(nproc) advanced-ckks-bootstrapping gelu-piecewise-cpu layernorm-cpu softmax-cpu matmul-cpu causal-attention-cpu transformer-block-cpu
 
 # Stage 2: Runtime stage
 FROM ubuntu:22.04 AS runner
